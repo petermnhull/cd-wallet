@@ -68,13 +68,20 @@ fun search(items: List<Item>, query: String, limit: Int): List<Item> {
         .toList()
 }
 
+/** Spotify asked us not to call it again before [untilMillis]. */
+class RateLimited(val untilMillis: Long) : IOException("Spotify rate limit")
+
 /** The user's saved songs, albums and playlists, cached on disk between launches. */
 class Library(context: Context, private val auth: Auth) {
     private val file = File(context.filesDir, "library-v3.json")
+    private val prefs = context.getSharedPreferences("library", Context.MODE_PRIVATE)
     private val _items = MutableStateFlow(load())
     val items: StateFlow<List<Item>> = _items
 
     val lastSyncMillis: Long get() = if (file.exists()) file.lastModified() else 0
+
+    /** When Spotify's last long rate limit ends, or 0 if there wasn't one. */
+    val rateLimitedUntil: Long get() = prefs.getLong(KEY_LIMITED_UNTIL, 0)
 
     suspend fun sync(onProgress: (Int) -> Unit) {
         val out = mutableListOf<Item>()
@@ -125,7 +132,7 @@ class Library(context: Context, private val auth: Auth) {
         while (url != null) {
             val res = Http.get(url, auth.accessToken())
             if (res.code == 429) {
-                delay((res.retryAfterSeconds ?: 2) * 1000)
+                waitOrGiveUp(res.retryAfterSeconds)
                 continue
             }
             if (res.code != 200) throw IOException("Spotify returned ${res.code} for ${url.substringBefore('?')}")
@@ -143,7 +150,12 @@ class Library(context: Context, private val auth: Auth) {
             val url = "https://api.spotify.com/v1/artists?ids=${chunk.joinToString(",")}"
             var res = Http.get(url, auth.accessToken())
             while (res.code == 429) {
-                delay((res.retryAfterSeconds ?: 2) * 1000)
+                // Artist art is optional, so a long wait keeps the rest of the sync rather than losing it.
+                try {
+                    waitOrGiveUp(res.retryAfterSeconds)
+                } catch (e: RateLimited) {
+                    return out
+                }
                 res = Http.get(url, auth.accessToken())
             }
             if (res.code != 200) break
@@ -154,6 +166,17 @@ class Library(context: Context, private val auth: Auth) {
             }
         }
         return out
+    }
+
+    /** Short waits are normal while paging; a long one (Spotify can ask for a day) ends the sync instead of hanging it. */
+    private suspend fun waitOrGiveUp(retryAfterSeconds: Long?) {
+        val seconds = retryAfterSeconds ?: 2
+        if (seconds > MAX_WAIT_SECONDS) {
+            val until = System.currentTimeMillis() + seconds * 1000
+            prefs.edit().putLong(KEY_LIMITED_UNTIL, until).apply()
+            throw RateLimited(until)
+        }
+        delay(seconds * 1000)
     }
 
     private fun load(): List<Item> = try {
@@ -170,6 +193,9 @@ class Library(context: Context, private val auth: Auth) {
     }
 
     private companion object {
+        const val KEY_LIMITED_UNTIL = "rateLimitedUntil"
+        const val MAX_WAIT_SECONDS = 60L
+
         fun artists(o: JSONObject): String {
             val arr = o.optJSONArray("artists") ?: return ""
             return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("name") }.joinToString(", ")
