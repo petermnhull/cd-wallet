@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CD Wallet</title>
+    <meta
+      name="description"
+      content="A minimal Android player for your Spotify library: search, album art and play. No feed, podcasts or recommendations."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#121615"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta property="og:title" content="CD Wallet" />
+    <meta
+      property="og:description"
+      content="Just your Spotify library: search it, tap, play."
+    />
+    <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='5' width='26' height='22' rx='5' fill='%231f7a75' fill-opacity='.2'/%3E%3Cpath d='M8 5h16' stroke='%231f7a75' stroke-width='2' stroke-dasharray='2 1.5'/%3E%3Ccircle cx='16' cy='16' r='7.5' fill='%231f7a75'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23ffffff'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        --bg: #fff;
+        --fg: #1b1f1f;
+        --muted: #5b6766;
+        --accent: #1f7a75;
+        --accent-soft: #dff5f3;
+        --code-bg: #f3f6f6;
+        --frame: #1b1f1f;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121615;
+          --fg: #e6ecea;
+          --muted: #9aa8a5;
+          --accent: #5fd1c7;
+          --accent-soft: #1f3533;
+          --code-bg: #1b2120;
+          --frame: #2c3533;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 3rem 1rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font: 1.125rem/1.6 var(--font);
+      }
+      main {
+        max-width: 36rem;
+        margin: 0 auto;
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 0.15em;
+      }
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+      .mark {
+        width: 3.5rem;
+        height: 3.5rem;
+        display: block;
+        margin: 0 auto 1rem;
+      }
+      .mark rect,
+      .mark circle {
+        fill: var(--accent);
+      }
+      .mark .hole {
+        fill: var(--bg);
+      }
+      .mark .zip {
+        stroke: var(--accent);
+        stroke-width: 2;
+        stroke-dasharray: 2 1.5;
+        fill: none;
+      }
+      h1 {
+        font-size: clamp(1.6rem, 5vw, 2.1rem);
+        line-height: 1.2;
+        margin: 0 0 0.5rem;
+      }
+      .lede {
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .shots {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        margin: 0 0 0.75rem;
+      }
+      .shots img {
+        display: block;
+        width: min(42vw, 13.5rem);
+        height: auto;
+        border: 6px solid var(--frame);
+        border-radius: 1.75rem;
+        box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.18);
+      }
+      .shots img + img {
+        margin-top: 2.5rem;
+      }
+      .caption {
+        text-align: center;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin: 0 0 2.5rem;
+      }
+
+      h2 {
+        font-size: 1.2rem;
+        margin: 2.5rem 0 0.75rem;
+      }
+      p {
+        margin: 0 0 1rem;
+      }
+      .muted {
+        color: var(--muted);
+      }
+
+      .has {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 1rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .has li {
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 0.15rem 0.8rem;
+        font-size: 0.95rem;
+      }
+      .hasnt li {
+        background: none;
+        border: 1px solid var(--accent-soft);
+        color: var(--muted);
+        text-decoration: line-through;
+      }
+
+      ol.steps {
+        counter-reset: step;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      ol.steps > li {
+        counter-increment: step;
+        position: relative;
+        padding-left: 2.5rem;
+        margin-bottom: 1.25rem;
+      }
+      ol.steps > li::before {
+        content: counter(step);
+        position: absolute;
+        left: 0;
+        top: 0.1rem;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--accent);
+        color: var(--bg);
+        font-weight: 700;
+        font-size: 0.9rem;
+      }
+      ol.steps ul {
+        margin: 0.25rem 0 0;
+        padding-left: 1.1rem;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.88em;
+        background: var(--code-bg);
+        border-radius: 0.25rem;
+        padding: 0.1em 0.3em;
+        overflow-wrap: anywhere;
+      }
+
+      footer {
+        margin-top: 3.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="3" y="5" width="26" height="22" rx="5" fill-opacity=".2" />
+          <path class="zip" d="M8 5h16" />
+          <circle cx="16" cy="16" r="7.5" />
+          <circle class="hole" cx="16" cy="16" r="2" />
+        </svg>
+        <h1>CD Wallet</h1>
+        <p class="lede">
+          Just your Spotify library on Android without the clutter.
+        </p>
+      </header>
+
+      <div class="shots">
+        <img
+          src="screenshots/albums.jpg"
+          width="504"
+          height="1056"
+          alt="Searching albums for “low”: ten results with cover art, page 1 of 2, and a now-playing bar at the bottom"
+        />
+        <img
+          src="screenshots/artist.jpg"
+          width="504"
+          height="1056"
+          alt="An artist page: back arrow, artist name, a play button, and their six albums listed by year"
+        />
+      </div>
+      <p class="caption">Shown with a made-up demo library.</p>
+
+      <h2>What is it?</h2>
+      <p>
+        A tiny Android app for people who just want to listen to music. It shows
+        the albums, songs, artists and playlists you’ve already saved, with
+        album art and simple playback controls.
+      </p>
+      <ul class="has" aria-label="Has">
+        <li>Your library</li>
+        <li>Search</li>
+        <li>Album art</li>
+        <li>Play, pause, skip</li>
+      </ul>
+      <ul class="has hasnt" aria-label="Doesn’t have">
+        <li>Home feed</li>
+        <li>Podcasts</li>
+        <li>Recommendations</li>
+        <li>Endless scrolling</li>
+      </ul>
+      <p class="muted">
+        You need Spotify Premium and the Spotify app installed. CD Wallet
+        controls it in the background, so you never have to open it.
+      </p>
+
+      <h2>Install on Android</h2>
+      <p class="muted">
+        CD Wallet isn’t on the Play Store. You build it once on your computer
+        and it stays on your phone like any other app.
+      </p>
+      <ol class="steps">
+        <li>
+          Install
+          <a href="https://developer.android.com/studio">Android Studio</a> and
+          download the
+          <a href="https://github.com/petermnhull/cd-wallet">source code</a>.
+        </li>
+        <li>
+          Create an app on the
+          <a href="https://developer.spotify.com/dashboard"
+            >Spotify developer dashboard</a
+          >:
+          <ul>
+            <li>Redirect URI <code>shelf://callback</code></li>
+            <li>Tick <strong>Web API</strong> and <strong>Android</strong></li>
+            <li>
+              Package <code>com.peterhull.shelf</code> and your debug SHA-1,
+              which the README explains how to get
+            </li>
+            <li>Add your Spotify email under User Management</li>
+          </ul>
+        </li>
+        <li>Add the app’s Client ID to <code>local.properties</code> as <code>spotify.clientId=…</code></li>
+        <li>
+          Download <code>spotify-app-remote-release-0.8.0.aar</code> from
+          <a href="https://github.com/spotify/android-sdk/releases"
+            >Spotify’s Android SDK</a
+          >
+          into <code>app/libs/</code>.
+        </li>
+        <li>
+          On your phone, turn on Developer options (tap
+          <em>Build number</em> seven times in Settings → About phone), then
+          <em>USB debugging</em> or <em>Wireless debugging</em>.
+        </li>
+        <li>
+          Open the project in Android Studio, pick your phone and press ▶.
+        </li>
+        <li>
+          In the Spotify app, turn off <em>Autoplay</em> under Settings →
+          Playback, so it stops when your album ends.
+        </li>
+        <li>
+          When CD Wallet asks to send notifications, tap <em>Allow</em>. That’s
+          its player on the lock screen and in the notification shade.
+        </li>
+      </ol>
+
+      <h2>Lock screen</h2>
+      <p>
+        While music plays you’ll see two players: CD Wallet’s, which opens CD
+        Wallet when tapped, and Spotify’s, which opens Spotify. Android doesn’t
+        let apps hide the player of the app that’s actually making the sound, so
+        Spotify’s stays. Swipe between them, or just use the one in front.
+      </p>
+
+      <footer>
+        <p>
+          Not affiliated with or endorsed by Spotify. Spotify is a trademark of
+          Spotify AB.<br />
+          <a href="https://github.com/petermnhull/cd-wallet">Source code</a> ·
+          <a href="https://petermnhull.github.io/">Peter Hull</a>
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>
