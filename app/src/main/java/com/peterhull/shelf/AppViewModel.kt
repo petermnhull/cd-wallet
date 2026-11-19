@@ -30,7 +30,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val loggedIn: StateFlow<Boolean> = _loggedIn
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status
-    private var syncing = false
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing
 
     init {
         val stale = System.currentTimeMillis() - library.lastSyncMillis > 12 * 60 * 60 * 1000L
@@ -48,17 +49,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sync() {
-        if (syncing) return
+        if (_syncing.value) return
         val limitedUntil = library.rateLimitedUntil
         if (limitedUntil > System.currentTimeMillis()) {
             _status.value = rateLimitMessage(limitedUntil)
             return
         }
-        syncing = true
+        _syncing.value = true
         viewModelScope.launch {
-            _status.value = "Syncing library…"
+            _status.value = "Syncing…"
             try {
-                library.sync { n -> _status.value = "Syncing library… $n items" }
+                library.sync { n -> _status.value = "Syncing… $n items" }
                 _status.value = null
             } catch (e: RateLimited) {
                 _status.value = rateLimitMessage(e.untilMillis)
@@ -66,13 +67,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _status.value = "Sync failed: ${e.message}"
                 _loggedIn.value = auth.isLoggedIn
             } finally {
-                syncing = false
+                _syncing.value = false
             }
         }
     }
 
-    private fun rateLimitMessage(until: Long): String =
-        "Spotify asked CD Wallet to wait until ${formatTime(until)} before syncing again. Using your saved library."
+    private fun rateLimitMessage(until: Long): String = "Sync paused by Spotify until ${formatTime(until)}"
 
     private fun formatTime(millis: Long): String {
         val day = if (DateUtils.isToday(millis)) 0 else DateUtils.FORMAT_SHOW_WEEKDAY
