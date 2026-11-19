@@ -1,8 +1,6 @@
 package com.peterhull.shelf
 
-import android.content.Intent
 import android.graphics.Bitmap
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -82,7 +80,6 @@ import coil.compose.AsyncImage
 private const val PageSize = 10
 private const val MaxPages = 10
 private val PagerHeight = 48.dp
-private const val SpotifyPackage = "com.spotify.music"
 
 @Composable
 fun CdWalletApp(vm: AppViewModel, onLogin: () -> Unit) {
@@ -262,8 +259,9 @@ private fun rememberShownAlbum(vm: AppViewModel, nowPlaying: NowPlaying?, enable
         }
         val np = nowPlaying?.takeIf { it.albumUri.isNotEmpty() } ?: return@LaunchedEffect
         val s = shown
-        if (s != null && (s.uri == np.albumUri || s.tracks.orEmpty().any { it.isPlaying(np) })) return@LaunchedEffect
-        shown = ShownAlbum(np.albumUri, np.album, np.artist, null)
+        // Only a loaded album sticks: a load cut short by a burst of track changes must be retried.
+        if (s?.tracks != null && (s.uri == np.albumUri || s.tracks.any { it.isPlaying(np) })) return@LaunchedEffect
+        if (s?.uri != np.albumUri) shown = ShownAlbum(np.albumUri, np.album, np.artist, null)
         shown = ShownAlbum(np.albumUri, np.album, np.artist, vm.albumTracks(np.albumUri) ?: emptyList())
     }
     if (!enabled) return null
@@ -386,12 +384,7 @@ private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit, menu: @Composable
 
 @Composable
 private fun LibraryMenu(items: List<Item>, onSync: () -> Unit, onLogout: () -> Unit) {
-    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
-    // Settings crashes when asked for an app that isn't installed.
-    val spotifyInstalled = remember {
-        runCatching { context.packageManager.getPackageInfo(SpotifyPackage, 0) }.isSuccess
-    }
     val counts = remember(items) { items.filter { it.saved }.groupingBy { it.kind }.eachCount() }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
@@ -405,16 +398,6 @@ private fun LibraryMenu(items: List<Item>, onSync: () -> Unit, onLogout: () -> U
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             DropdownMenuItem(text = { Text("Sync library") }, onClick = { open = false; onSync() })
-            // Android won't let one app hide another's media card; turning off Spotify's notifications is up to you.
-            if (spotifyInstalled) DropdownMenuItem(text = { Text("Hide Spotify's player") }, onClick = {
-                open = false
-                runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, SpotifyPackage)
-                    )
-                }
-            })
             DropdownMenuItem(text = { Text("Log out") }, onClick = { open = false; onLogout() })
         }
     }

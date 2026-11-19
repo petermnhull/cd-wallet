@@ -6,6 +6,7 @@ import android.net.Uri
 import android.text.format.DateUtils
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -96,6 +97,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!albumUri.startsWith("spotify:album:")) return null
         return try {
             library.albumTracks(albumUri)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             null
         }
