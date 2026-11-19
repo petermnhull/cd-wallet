@@ -2,11 +2,15 @@ package com.peterhull.shelf
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxWithConstraintsScope
 import androidx.compose.foundation.layout.Column
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -76,6 +81,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 
 private const val PageSize = 10
 private const val MaxPages = 10
@@ -148,7 +154,7 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
     KindTabs(
         kind,
         onSelect = { kind = it; artistUri = null; showAlbum = false },
-        menu = { LibraryMenu(items, onSync = vm::sync, onLogout = vm::logout) },
+        menu = { LibraryMenu(items, status.takeIf { !demo }, onSync = vm::sync, onLogout = vm::logout) },
     )
     Spacer(Modifier.height(8.dp))
     if (album != null) {
@@ -207,15 +213,7 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
                 if (item.kind == Kind.Artist) artistUri = item.uri else vm.play(context, item)
             }
         }
-    }
-
-    (status ?: playerError)?.takeIf { !demo }?.let {
-        Text(
-            it,
-            Modifier.padding(top = 8.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Toast((status ?: playerError)?.takeIf { !demo })
     }
     current?.let {
         NowPlayingBar(it, if (demo) demoArt else art, vm.player, onClick = { showAlbum = !showAlbum; focus.clearFocus() })
@@ -394,7 +392,7 @@ private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit, menu: @Composable
 }
 
 @Composable
-private fun LibraryMenu(items: List<Item>, onSync: () -> Unit, onLogout: () -> Unit) {
+private fun LibraryMenu(items: List<Item>, status: String?, onSync: () -> Unit, onLogout: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     val counts = remember(items) { items.filter { it.saved }.groupingBy { it.kind }.eachCount() }
     Box {
@@ -408,9 +406,51 @@ private fun LibraryMenu(items: List<Item>, onSync: () -> Unit, onLogout: () -> U
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // The toast is brief, so the latest sync news stays readable here.
+            status?.let {
+                Text(
+                    it,
+                    Modifier.widthIn(max = 240.dp).padding(horizontal = 12.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             DropdownMenuItem(text = { Text("Sync library") }, onClick = { open = false; onSync() })
             DropdownMenuItem(text = { Text("Log out") }, onClick = { open = false; onLogout() })
         }
+    }
+}
+
+/** Floats over the bottom of the list for a few seconds after each new message, without moving anything. */
+@Composable
+private fun BoxScope.Toast(message: String?) {
+    var text by remember { mutableStateOf("") }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(message) {
+        if (message == null) {
+            visible = false
+            return@LaunchedEffect
+        }
+        text = message
+        visible = true
+        delay(4_000)
+        visible = false
+    }
+    AnimatedVisibility(
+        visible,
+        Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        Text(
+            text,
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.inverseSurface)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+        )
     }
 }
 
