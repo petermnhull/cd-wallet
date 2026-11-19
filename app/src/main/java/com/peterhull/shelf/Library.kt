@@ -68,6 +68,8 @@ fun search(items: List<Item>, query: String, limit: Int): List<Item> {
         .toList()
 }
 
+data class AlbumTrack(val uri: String, val title: String)
+
 /** Spotify asked us not to call it again before [untilMillis]. */
 class RateLimited(val untilMillis: Long) : IOException("Spotify rate limit")
 
@@ -77,6 +79,7 @@ class Library(context: Context, private val auth: Auth) {
     private val prefs = context.getSharedPreferences("library", Context.MODE_PRIVATE)
     private val _items = MutableStateFlow(load())
     val items: StateFlow<List<Item>> = _items
+    private val trackCache = mutableMapOf<String, List<AlbumTrack>>()
 
     val lastSyncMillis: Long get() = if (file.exists()) file.lastModified() else 0
 
@@ -122,6 +125,19 @@ class Library(context: Context, private val auth: Auth) {
         save(out)
     }
 
+    /** An album's track list, for showing what's coming up; fetched on demand and kept in memory. */
+    suspend fun albumTracks(albumUri: String): List<AlbumTrack> {
+        trackCache[albumUri]?.let { return it }
+        if (rateLimitedUntil > System.currentTimeMillis()) throw RateLimited(rateLimitedUntil)
+        val id = albumUri.substringAfterLast(':')
+        val out = mutableListOf<AlbumTrack>()
+        fetchPages("https://api.spotify.com/v1/albums/$id/tracks?limit=50&market=from_token") { t ->
+            out += AlbumTrack(t.getString("uri"), t.getString("name"))
+        }
+        trackCache[albumUri] = out
+        return out
+    }
+
     fun clear() {
         file.delete()
         _items.value = emptyList()
@@ -143,11 +159,17 @@ class Library(context: Context, private val auth: Auth) {
         }
     }
 
-    /** Best-effort: artist art is optional, so a refused request just leaves artists without images. */
+    /**
+     * Best-effort: artist art is optional, so a refused request just leaves artists without images.
+     * Spotify only allows one artist per request now, so art from the last sync is reused.
+     */
     private suspend fun fetchArtistImages(ids: List<String>): Map<String, String> {
+        val known = _items.value.filter { it.kind == Kind.Artist }
+            .mapNotNull { a -> a.imageUrl?.let { a.uri.substringAfterLast(':') to it } }.toMap()
         val out = mutableMapOf<String, String>()
-        for (chunk in ids.chunked(50)) {
-            val url = "https://api.spotify.com/v1/artists?ids=${chunk.joinToString(",")}"
+        for (id in ids) {
+            known[id]?.let { out[id] = it; continue }
+            val url = "https://api.spotify.com/v1/artists/$id"
             var res = Http.get(url, auth.accessToken())
             while (res.code == 429) {
                 // Artist art is optional, so a long wait keeps the rest of the sync rather than losing it.
@@ -158,12 +180,9 @@ class Library(context: Context, private val auth: Auth) {
                 }
                 res = Http.get(url, auth.accessToken())
             }
+            if (res.code == 404) continue
             if (res.code != 200) break
-            val arr = JSONObject(res.body).optJSONArray("artists") ?: continue
-            for (i in 0 until arr.length()) {
-                val a = arr.optJSONObject(i) ?: continue
-                pickImage(a.optJSONArray("images"))?.let { out[a.getString("id")] = it }
-            }
+            pickImage(JSONObject(res.body).optJSONArray("images"))?.let { out[id] = it }
         }
         return out
     }

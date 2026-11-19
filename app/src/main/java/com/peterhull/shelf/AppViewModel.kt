@@ -90,6 +90,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         player.playAll(context, songs.shuffled().map { it.uri })
     }
 
+    /** Null when the track list can't be fetched (offline, rate limited, not an album). */
+    suspend fun albumTracks(albumUri: String): List<AlbumTrack>? {
+        if (_demo.value) return DemoData.nowPlayingAlbum
+        if (!albumUri.startsWith("spotify:album:")) return null
+        return try {
+            library.albumTracks(albumUri)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun logout() {
         auth.logout()
         library.clear()
