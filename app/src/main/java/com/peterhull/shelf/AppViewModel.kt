@@ -3,8 +3,10 @@ package com.peterhull.shelf
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.text.format.DateUtils
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -46,12 +48,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sync() {
         if (syncing) return
+        val limitedUntil = library.rateLimitedUntil
+        if (limitedUntil > System.currentTimeMillis()) {
+            _status.value = rateLimitMessage(limitedUntil)
+            return
+        }
         syncing = true
         viewModelScope.launch {
             _status.value = "Syncing library…"
             try {
                 library.sync { n -> _status.value = "Syncing library… $n items" }
                 _status.value = null
+            } catch (e: RateLimited) {
+                _status.value = rateLimitMessage(e.untilMillis)
             } catch (e: Exception) {
                 _status.value = "Sync failed: ${e.message}"
                 _loggedIn.value = auth.isLoggedIn
@@ -59,6 +68,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 syncing = false
             }
         }
+    }
+
+    private fun rateLimitMessage(until: Long): String {
+        val day = if (DateUtils.isToday(until)) 0 else DateUtils.FORMAT_SHOW_WEEKDAY
+        val time = DateUtils.formatDateTime(getApplication(), until, DateUtils.FORMAT_SHOW_TIME or day)
+        return "Spotify asked CD Wallet to wait until $time before syncing again. Using your saved library."
     }
 
     fun setDemo(on: Boolean) {
@@ -74,6 +89,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_demo.value) return
         val songs = items.value.filter { it.kind == Kind.Song && artist.uri in it.artistUris }
         player.playAll(context, songs.shuffled().map { it.uri })
+    }
+
+    /** Null when the track list can't be fetched (offline, rate limited, not an album). */
+    suspend fun albumTracks(albumUri: String): List<AlbumTrack>? {
+        if (_demo.value) return DemoData.nowPlayingAlbum
+        if (!albumUri.startsWith("spotify:album:")) return null
+        return try {
+            library.albumTracks(albumUri)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun logout() {

@@ -57,9 +57,16 @@ object DemoData {
 
     val nowPlaying: NowPlaying
         get() = NowPlaying(
-            uri = "demo:track:0", title = "Undertow", artist = "The Harbour Lights", paused = false,
+            uri = "demo:track:0", title = "Undertow", artist = "The Harbour Lights",
+            albumUri = "demo:album:0", album = "Low Tide", paused = false,
             positionMs = 83_000, durationMs = 214_000, updatedAt = SystemClock.elapsedRealtime(),
         )
+
+    /** Track list of the now-playing album ("Low Tide"). */
+    val nowPlayingAlbum: List<AlbumTrack> = listOf(
+        "Paper Boats", "Undertow", "Harbour Wall", "Salt Water", "Fog Lamps", "Tide Tables",
+        "Driftwood", "Lighthouse", "Open Water", "Last Ferry Home",
+    ).mapIndexed { i, title -> AlbumTrack(if (title == "Undertow") "demo:track:0" else "demo:album0:$i", title) }
 
     /** Cover of the now-playing track's album ("Low Tide"). */
     fun nowPlayingArt(): Bitmap = cover(0)

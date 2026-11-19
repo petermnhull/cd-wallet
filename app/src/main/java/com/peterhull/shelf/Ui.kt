@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -30,12 +32,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -132,11 +138,22 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
     val artistAlbums = remember(items, artist) {
         artist?.let { a -> items.filter { it.kind == Kind.Album && a.uri in it.artistUris }.sortedByDescending { it.year } }
     }
-    BackHandler(enabled = artist != null) { artistUri = null }
+    val current = if (demo) DemoData.nowPlaying else nowPlaying
+    var showAlbum by rememberSaveable { mutableStateOf(false) }
+    val album = rememberShownAlbum(vm, current, showAlbum)
+    BackHandler(enabled = artist != null || album != null) {
+        if (album != null) showAlbum = false else artistUri = null
+    }
 
-    KindTabs(kind, onSelect = { kind = it; artistUri = null })
+    KindTabs(
+        kind,
+        onSelect = { kind = it; artistUri = null; showAlbum = false },
+        menu = { LibraryMenu(items, onSync = vm::sync, onLogout = vm::logout) },
+    )
     Spacer(Modifier.height(8.dp))
-    if (artist != null && artistAlbums != null) {
+    if (album != null) {
+        AlbumHeader(album, onBack = { showAlbum = false })
+    } else if (artist != null && artistAlbums != null) {
         ArtistHeader(artist, artistAlbums.size, onBack = { artistUri = null }, onPlay = { vm.playArtistSongs(context, artist) })
     } else OutlinedTextField(
         value = query,
@@ -155,12 +172,19 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
     )
     Spacer(Modifier.height(8.dp))
 
-    val ofKind = remember(items, kind) { items.filter { it.kind == kind && it.saved } }
-    val results = remember(ofKind, query) { search(ofKind, query, PageSize * MaxPages) }
+    val ofKind = remember(items, kind) {
+        val all = items.filter { it.kind == kind && it.saved }
+        // Albums file under their artist, like a shelf of CDs; everything else by title.
+        if (kind == Kind.Album) all.sortedWith(compareBy({ normalize(it.subtitle) }, { it.normTitle }))
+        else all.sortedBy { it.normTitle }
+    }
+    // With no query, browse the whole tab; a search keeps to its best matches.
+    val results = remember(ofKind, query) { if (query.isBlank()) ofKind else search(ofKind, query, PageSize * MaxPages) }
 
     // Exactly PageSize rows always fill the space above the pager: there is deliberately no scrolling.
     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
         when {
+            album != null -> AlbumTracks(album, current)
             artistAlbums != null -> if (artistAlbums.isEmpty()) {
                 Text(
                     "No albums in your library",
@@ -172,7 +196,7 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
                     vm.play(context, it)
                 }
             }
-            query.isBlank() -> LibrarySummary(items, onSync = vm::sync, onLogout = vm::logout)
+            ofKind.isEmpty() -> LibrarySummary(items, onSync = vm::sync, onLogout = vm::logout)
             results.isEmpty() -> Text(
                 "No matches",
                 Modifier.align(Alignment.Center),
@@ -193,8 +217,97 @@ private fun ColumnScope.LibraryScreen(vm: AppViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    if (demo) NowPlayingBar(DemoData.nowPlaying, demoArt, vm.player)
-    else nowPlaying?.let { NowPlayingBar(it, art, vm.player) }
+    current?.let {
+        NowPlayingBar(it, if (demo) demoArt else art, vm.player, onClick = { showAlbum = !showAlbum; focus.clearFocus() })
+    }
+}
+
+@Composable
+private fun AlbumHeader(album: ShownAlbum, onBack: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            Text(album.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+            Text(
+                album.artist,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private class ShownAlbum(val uri: String, val title: String, val artist: String, val tracks: List<AlbumTrack>?)
+
+private fun AlbumTrack.isPlaying(np: NowPlaying?) =
+    np != null && (uri == np.uri || normalize(title) == normalize(np.title))
+
+/**
+ * The album to show while the track list is open. It sticks while its songs keep playing, so a skip
+ * that briefly reports no album, or a relinked copy from another release, doesn't make the list jump.
+ */
+@Composable
+private fun rememberShownAlbum(vm: AppViewModel, nowPlaying: NowPlaying?, enabled: Boolean): ShownAlbum? {
+    var shown by remember { mutableStateOf<ShownAlbum?>(null) }
+    LaunchedEffect(enabled, nowPlaying?.albumUri, nowPlaying?.uri) {
+        if (!enabled) {
+            shown = null
+            return@LaunchedEffect
+        }
+        val np = nowPlaying?.takeIf { it.albumUri.isNotEmpty() } ?: return@LaunchedEffect
+        val s = shown
+        // Only a loaded album sticks: a load cut short by a burst of track changes must be retried.
+        if (s?.tracks != null && (s.uri == np.albumUri || s.tracks.any { it.isPlaying(np) })) return@LaunchedEffect
+        if (s?.uri != np.albumUri) shown = ShownAlbum(np.albumUri, np.album, np.artist, null)
+        shown = ShownAlbum(np.albumUri, np.album, np.artist, vm.albumTracks(np.albumUri) ?: emptyList())
+    }
+    if (!enabled) return null
+    // Before the first load lands, show the header straight away rather than a frame of the library.
+    return shown ?: nowPlaying?.takeIf { it.albumUri.isNotEmpty() }?.let { ShownAlbum(it.albumUri, it.album, it.artist, null) }
+}
+
+/** The playing album's songs, just to look at: the transport buttons stay the only controls. */
+@Composable
+private fun BoxWithConstraintsScope.AlbumTracks(album: ShownAlbum, nowPlaying: NowPlaying?) {
+    val list = album.tracks
+    when {
+        list == null -> Unit
+        list.isEmpty() -> Text(
+            "Couldn't load this album's songs",
+            Modifier.align(Alignment.Center),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        else -> {
+            // Fit the whole album on screen when it can; very long ones scroll.
+            val rowHeight = (maxHeight / list.size).coerceIn(32.dp, 48.dp)
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                list.forEachIndexed { i, track ->
+                    val playing = track.isPlaying(nowPlaying)
+                    val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${i + 1}",
+                            Modifier.width(32.dp),
+                            color = color,
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            track.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (playing) color else MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** Exactly PageSize rows fill the space above the pager, however tall it is. */
@@ -245,8 +358,12 @@ private fun ArtistHeader(artist: Item, albumCount: Int, onBack: () -> Unit, onPl
 }
 
 @Composable
-private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit, menu: @Composable () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Kind.entries.forEach { kind ->
             val isSelected = kind == selected
             Text(
@@ -259,6 +376,29 @@ private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit) {
                 style = MaterialTheme.typography.labelLarge,
                 color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        Spacer(Modifier.weight(1f))
+        menu()
+    }
+}
+
+@Composable
+private fun LibraryMenu(items: List<Item>, onSync: () -> Unit, onLogout: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val counts = remember(items) { items.filter { it.saved }.groupingBy { it.kind }.eachCount() }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Default.MoreVert, contentDescription = "Library options")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text(
+                Kind.entries.joinToString("\n") { "${counts[it] ?: 0} ${it.label.lowercase()}" },
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            DropdownMenuItem(text = { Text("Sync library") }, onClick = { open = false; onSync() })
+            DropdownMenuItem(text = { Text("Log out") }, onClick = { open = false; onLogout() })
         }
     }
 }
@@ -354,13 +494,14 @@ private fun Pager(page: Int, pages: Int, onPage: (Int) -> Unit) {
 }
 
 @Composable
-private fun NowPlayingBar(nowPlaying: NowPlaying, art: Bitmap?, player: Player) {
+private fun NowPlayingBar(nowPlaying: NowPlaying, art: Bitmap?, player: Player, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .padding(top = 8.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
