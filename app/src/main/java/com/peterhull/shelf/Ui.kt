@@ -240,7 +240,13 @@ private fun AlbumHeader(album: ShownAlbum, onBack: () -> Unit) {
     }
 }
 
-private class ShownAlbum(val uri: String, val title: String, val artist: String, val tracks: List<AlbumTrack>?)
+private class ShownAlbum(
+    val uri: String,
+    val title: String,
+    val artist: String,
+    val tracks: List<AlbumTrack>?,
+    val error: String? = null,
+)
 
 private fun AlbumTrack.isPlaying(np: NowPlaying?) =
     np != null && (uri == np.uri || normalize(title) == normalize(np.title))
@@ -262,7 +268,11 @@ private fun rememberShownAlbum(vm: AppViewModel, nowPlaying: NowPlaying?, enable
         // Only a loaded album sticks: a load cut short by a burst of track changes must be retried.
         if (s?.tracks != null && (s.uri == np.albumUri || s.tracks.any { it.isPlaying(np) })) return@LaunchedEffect
         if (s?.uri != np.albumUri) shown = ShownAlbum(np.albumUri, np.album, np.artist, null)
-        shown = ShownAlbum(np.albumUri, np.album, np.artist, vm.albumTracks(np.albumUri) ?: emptyList())
+        val result = vm.albumTracks(np.albumUri)
+        shown = ShownAlbum(
+            np.albumUri, np.album, np.artist, result.getOrNull() ?: emptyList(),
+            result.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName },
+        )
     }
     if (!enabled) return null
     // Before the first load lands, show the header straight away rather than a frame of the library.
@@ -276,9 +286,10 @@ private fun BoxWithConstraintsScope.AlbumTracks(album: ShownAlbum, nowPlaying: N
     when {
         list == null -> Unit
         list.isEmpty() -> Text(
-            "Couldn't load this album's songs",
+            listOfNotNull("Couldn't load this album's songs", album.error).joinToString("\n\n"),
             Modifier.align(Alignment.Center),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
         else -> {
             // Fit the whole album on screen when it can; very long ones scroll.

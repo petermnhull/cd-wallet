@@ -77,6 +77,8 @@ class RateLimited(val untilMillis: Long) : IOException("Spotify rate limit")
 class Library(context: Context, private val auth: Auth) {
     private val file = File(context.filesDir, "library-v3.json")
     private val prefs = context.getSharedPreferences("library", Context.MODE_PRIVATE)
+    /** Artist id to photo URL ("" when Spotify has none), kept across syncs since each costs a request. */
+    private val artistPhotos = context.getSharedPreferences("artist-photos", Context.MODE_PRIVATE)
     private val _items = MutableStateFlow(load())
     val items: StateFlow<List<Item>> = _items
     private val trackCache = mutableMapOf<String, List<AlbumTrack>>()
@@ -98,7 +100,7 @@ class Library(context: Context, private val auth: Auth) {
         fetchPages("https://api.spotify.com/v1/me/albums?limit=50") { row ->
             val a = row.optJSONObject("album") ?: return@fetchPages
             albums[a.getString("uri")] = album(a, saved = true)
-            tally(artists, a) { it.albums++ }
+            tally(artists, a) { it.albums++; it.cover = it.cover ?: pickImage(a.optJSONArray("images")) }
             onProgress(out.size)
         }
         fetchPages("https://api.spotify.com/v1/me/tracks?limit=50") { row ->
@@ -106,7 +108,10 @@ class Library(context: Context, private val auth: Auth) {
             if (t.optBoolean("is_local")) return@fetchPages
             out += Item(t.getString("uri"), Kind.Song, t.getString("name"), artists(t),
                 pickImage(t.optJSONObject("album")?.optJSONArray("images")), artistUris = uris(t))
-            tally(artists, t) { it.songs++ }
+            tally(artists, t) {
+                it.songs++
+                it.cover = it.cover ?: pickImage(t.optJSONObject("album")?.optJSONArray("images"))
+            }
             // Link the song's album to everyone on the song, so features show up on their artist page too.
             t.optJSONObject("album")?.let { a ->
                 val uri = a.optString("uri").ifEmpty { null } ?: return@let
@@ -117,9 +122,11 @@ class Library(context: Context, private val auth: Auth) {
         }
         out += albums.values
         // Artists come from your saved songs and albums, so this stays within your library.
-        val images = fetchArtistImages(artists.keys.map { it.substringAfterLast(':') })
+        fetchArtistPhotos(artists.keys.map { it.substringAfterLast(':') })
         artists.forEach { (uri, tally) ->
-            out += Item(uri, Kind.Artist, tally.name, tally.summary(), images[uri.substringAfterLast(':')])
+            // An artist without a photo yet shows one of their covers instead.
+            val photo = artistPhotos.getString(uri.substringAfterLast(':'), null)?.ifEmpty { null }
+            out += Item(uri, Kind.Artist, tally.name, tally.summary(), photo ?: tally.cover)
         }
         _items.value = out
         save(out)
@@ -140,6 +147,7 @@ class Library(context: Context, private val auth: Auth) {
 
     fun clear() {
         file.delete()
+        artistPhotos.edit().clear().apply()
         _items.value = emptyList()
     }
 
@@ -160,31 +168,26 @@ class Library(context: Context, private val auth: Auth) {
     }
 
     /**
-     * Best-effort: artist art is optional, so a refused request just leaves artists without images.
-     * Spotify only allows one artist per request now, so art from the last sync is reused.
+     * Spotify only allows one artist per request now, and a burst of hundreds gets the app rate limited
+     * for hours. So each sync fetches a few missing photos, spaced out, and stops at the first 429.
      */
-    private suspend fun fetchArtistImages(ids: List<String>): Map<String, String> {
-        val known = _items.value.filter { it.kind == Kind.Artist }
-            .mapNotNull { a -> a.imageUrl?.let { a.uri.substringAfterLast(':') to it } }.toMap()
-        val out = mutableMapOf<String, String>()
-        for (id in ids) {
-            known[id]?.let { out[id] = it; continue }
-            val url = "https://api.spotify.com/v1/artists/$id"
-            var res = Http.get(url, auth.accessToken())
-            while (res.code == 429) {
-                // Artist art is optional, so a long wait keeps the rest of the sync rather than losing it.
-                try {
-                    waitOrGiveUp(res.retryAfterSeconds)
-                } catch (e: RateLimited) {
-                    return out
+    private suspend fun fetchArtistPhotos(ids: List<String>) {
+        val missing = ids.filter { !artistPhotos.contains(it) }.take(ARTIST_PHOTOS_PER_SYNC)
+        for (id in missing) {
+            val res = Http.get("https://api.spotify.com/v1/artists/$id", auth.accessToken())
+            if (res.code == 429) {
+                val seconds = res.retryAfterSeconds ?: 0
+                if (seconds > MAX_WAIT_SECONDS) {
+                    prefs.edit().putLong(KEY_LIMITED_UNTIL, System.currentTimeMillis() + seconds * 1000).apply()
                 }
-                res = Http.get(url, auth.accessToken())
+                return
             }
-            if (res.code == 404) continue
-            if (res.code != 200) break
-            pickImage(JSONObject(res.body).optJSONArray("images"))?.let { out[id] = it }
+            if (res.code == 404) artistPhotos.edit().putString(id, "").apply()
+            if (res.code != 200) return
+            val photo = pickImage(JSONObject(res.body).optJSONArray("images")).orEmpty()
+            artistPhotos.edit().putString(id, photo).apply()
+            delay(ARTIST_PHOTO_SPACING_MS)
         }
-        return out
     }
 
     /** Short waits are normal while paging; a long one (Spotify can ask for a day) ends the sync instead of hanging it. */
@@ -214,6 +217,8 @@ class Library(context: Context, private val auth: Auth) {
     private companion object {
         const val KEY_LIMITED_UNTIL = "rateLimitedUntil"
         const val MAX_WAIT_SECONDS = 60L
+        const val ARTIST_PHOTOS_PER_SYNC = 25
+        const val ARTIST_PHOTO_SPACING_MS = 300L
 
         fun artists(o: JSONObject): String {
             val arr = o.optJSONArray("artists") ?: return ""
@@ -253,6 +258,7 @@ class Library(context: Context, private val auth: Auth) {
 private class ArtistTally(val name: String) {
     var songs = 0
     var albums = 0
+    var cover: String? = null
 
     fun summary() = listOfNotNull(count(songs, "song"), count(albums, "album")).joinToString(" · ")
 

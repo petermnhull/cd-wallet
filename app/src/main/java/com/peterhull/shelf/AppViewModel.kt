@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     val auth = Auth(app)
@@ -70,10 +71,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun rateLimitMessage(until: Long): String {
-        val day = if (DateUtils.isToday(until)) 0 else DateUtils.FORMAT_SHOW_WEEKDAY
-        val time = DateUtils.formatDateTime(getApplication(), until, DateUtils.FORMAT_SHOW_TIME or day)
-        return "Spotify asked CD Wallet to wait until $time before syncing again. Using your saved library."
+    private fun rateLimitMessage(until: Long): String =
+        "Spotify asked CD Wallet to wait until ${formatTime(until)} before syncing again. Using your saved library."
+
+    private fun formatTime(millis: Long): String {
+        val day = if (DateUtils.isToday(millis)) 0 else DateUtils.FORMAT_SHOW_WEEKDAY
+        return DateUtils.formatDateTime(getApplication(), millis, DateUtils.FORMAT_SHOW_TIME or day)
     }
 
     fun setDemo(on: Boolean) {
@@ -91,16 +94,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         player.playAll(context, songs.shuffled().map { it.uri })
     }
 
-    /** Null when the track list can't be fetched (offline, rate limited, not an album). */
-    suspend fun albumTracks(albumUri: String): List<AlbumTrack>? {
-        if (_demo.value) return DemoData.nowPlayingAlbum
-        if (!albumUri.startsWith("spotify:album:")) return null
+    /** The album's songs, or a short reason they couldn't be fetched (offline, rate limited, not an album). */
+    suspend fun albumTracks(albumUri: String): Result<List<AlbumTrack>> {
+        if (_demo.value) return Result.success(DemoData.nowPlayingAlbum)
+        if (!albumUri.startsWith("spotify:album:")) {
+            return Result.failure(IOException("Spotify didn't say which album this is ($albumUri)"))
+        }
         return try {
-            library.albumTracks(albumUri)
+            Result.success(library.albumTracks(albumUri))
         } catch (e: CancellationException) {
             throw e
+        } catch (e: RateLimited) {
+            Result.failure(IOException("Spotify asked CD Wallet to wait until ${formatTime(e.untilMillis)}"))
         } catch (e: Exception) {
-            null
+            Result.failure(e)
         }
     }
 
