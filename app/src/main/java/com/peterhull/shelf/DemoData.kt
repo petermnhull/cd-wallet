@@ -65,7 +65,7 @@ object DemoData {
     /** Track list of the now-playing album ("Low Tide"). */
     val nowPlayingAlbum: List<AlbumTrack> = listOf(
         "Paper Boats", "Undertow", "Harbour Wall", "Salt Water", "Fog Lamps", "Tide Tables",
-        "Driftwood", "Lighthouse", "Open Water", "Last Ferry Home",
+        "Driftwood", "Lighthouse", "Open Water", "Last Ferry Home", "Breakwater", "Shipping Forecast", "Low Water",
     ).mapIndexed { i, title -> AlbumTrack(if (title == "Undertow") "demo:track:0" else "demo:album0:$i", title) }
 
     /** Cover of the now-playing track's album ("Low Tide"). */

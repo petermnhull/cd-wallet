@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,13 +18,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -49,7 +50,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,13 +61,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,7 +90,7 @@ private val PagerHeight = 48.dp
 
 @Composable
 fun CdWalletApp(vm: AppViewModel, onLogin: () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme()) {
+    CdWalletTheme {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
             val demo by vm.demo.collectAsStateWithLifecycle()
@@ -284,6 +291,12 @@ private fun rememberShownAlbum(vm: AppViewModel, nowPlaying: NowPlaying?, enable
 @Composable
 private fun BoxWithConstraintsScope.AlbumTracks(album: ShownAlbum, nowPlaying: NowPlaying?) {
     val list = album.tracks
+    var page by rememberSaveable(album.uri) { mutableIntStateOf(0) }
+    val playingIndex = list?.indexOfFirst { it.isPlaying(nowPlaying) } ?: -1
+    // Follow the playing song onto its page as the album plays through.
+    LaunchedEffect(album.uri, playingIndex) {
+        if (playingIndex >= 0) page = playingIndex / PageSize
+    }
     when {
         list == null -> Unit
         list.isEmpty() -> Text(
@@ -293,32 +306,41 @@ private fun BoxWithConstraintsScope.AlbumTracks(album: ShownAlbum, nowPlaying: N
             textAlign = TextAlign.Center,
         )
         else -> {
-            // Fit the whole album on screen when it can; very long ones scroll.
-            val rowHeight = (maxHeight / list.size).coerceIn(32.dp, 48.dp)
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                list.forEachIndexed { i, track ->
-                    val playing = track.isPlaying(nowPlaying)
-                    val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "${i + 1}",
-                            Modifier.width(32.dp),
-                            color = color,
-                            textAlign = TextAlign.End,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text(
-                            track.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (playing) color else MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+            // Pages of PageSize songs, like the library: no scrolling.
+            val rowHeight = ((maxHeight - PagerHeight) / PageSize).coerceAtLeast(0.dp)
+            val pages = (list.size + PageSize - 1) / PageSize
+            val shown = page.coerceIn(0, pages - 1)
+            Column(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f)) {
+                    list.drop(shown * PageSize).take(PageSize).forEachIndexed { i, track ->
+                        TrackRow(shown * PageSize + i + 1, track, track.isPlaying(nowPlaying), rowHeight)
                     }
                 }
+                Pager(shown, pages) { page = it }
             }
         }
+    }
+}
+
+@Composable
+private fun TrackRow(number: Int, track: AlbumTrack, playing: Boolean, height: Dp) {
+    val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(Modifier.fillMaxWidth().height(height), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "$number",
+            Modifier.width(32.dp),
+            color = color,
+            textAlign = TextAlign.End,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            track.title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (playing) color else MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
@@ -371,25 +393,46 @@ private fun ArtistHeader(artist: Item, albumCount: Int, onBack: () -> Unit, onPl
 
 @Composable
 private fun KindTabs(selected: Kind, onSelect: (Kind) -> Unit, menu: @Composable () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Kind.entries.forEach { kind ->
-            val isSelected = kind == selected
-            Text(
-                kind.label,
-                Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-                    .clickable { onSelect(kind) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // The tabs scroll sideways at large font sizes rather than squeezing the menu out,
+        // fading at the edge so a cut-off tab reads as more to scroll.
+        val scroll = rememberScrollState()
+        Row(
+            Modifier
+                .weight(1f)
+                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                .drawWithContent {
+                    drawContent()
+                    if (scroll.canScrollForward) {
+                        drawRect(
+                            Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = size.width - 32.dp.toPx()),
+                            blendMode = BlendMode.DstOut,
+                        )
+                    }
+                }
+                .horizontalScroll(scroll),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Kind.entries.forEach { kind ->
+                val isSelected = kind == selected
+                // A full-height touch target around the smaller visible pill.
+                Box(
+                    Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(50)).clickable { onSelect(kind) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        kind.label,
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
-        Spacer(Modifier.weight(1f))
         menu()
     }
 }
@@ -406,7 +449,7 @@ private fun LibraryMenu(
     var open by remember { mutableStateOf(false) }
     val counts = remember(items) { items.filter { it.saved }.groupingBy { it.kind }.eachCount() }
     Box {
-        IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = { open = true }) {
             Icon(Icons.Default.MoreVert, contentDescription = "Library options")
         }
         // Fixed width, and sync news replaces the Sync row's own text, so nothing resizes while it's open.
@@ -459,6 +502,14 @@ private fun LibrarySummary(items: List<Item>, onSync: () -> Unit, onLogout: () -
 @Composable
 private fun ResultRow(item: Item, subtitle: String, height: Dp, onClick: () -> Unit) {
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    // Two lines need their real text height, which grows with the font size setting.
+    val type = MaterialTheme.typography
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val twoLines = remember(type, density) {
+        val px = measurer.measure("Ag", type.bodyLarge).size.height + measurer.measure("Ag", type.bodyMedium).size.height
+        with(density) { px.toDp() } + 8.dp
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -477,7 +528,7 @@ private fun ResultRow(item: Item, subtitle: String, height: Dp, onClick: () -> U
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         )
         Spacer(Modifier.width(12.dp))
-        if (height < 52.dp) {
+        if (height < twoLines) {
             // Too short for two lines (e.g. keyboard open): put the subtitle on the same line.
             Text(
                 buildAnnotatedString {
@@ -528,21 +579,19 @@ private fun Pager(page: Int, pages: Int, onPage: (Int) -> Unit) {
 
 @Composable
 private fun NowPlayingBar(nowPlaying: NowPlaying, art: Bitmap?, player: Player, onClick: () -> Unit) {
+    Stitch(Modifier.padding(top = 8.dp))
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
-            .padding(8.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val artModifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp))
         if (art != null) {
             Image(art.asImageBitmap(), contentDescription = null, modifier = artModifier, contentScale = ContentScale.Crop)
         } else {
-            Box(artModifier.background(MaterialTheme.colorScheme.surface))
+            Box(artModifier.background(MaterialTheme.colorScheme.surfaceVariant))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
