@@ -4,9 +4,11 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -20,7 +22,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The app is dark only, so the bars keep light icons whatever the system theme.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         setContent { CdWalletApp(vm, onLogin = { vm.auth.startLogin(this) }) }
         if (savedInstanceState == null) handleIntent(intent)
         if (Build.VERSION.SDK_INT >= 33 &&
